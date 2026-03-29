@@ -1,6 +1,5 @@
-# ignore everything
-*
+pacman-cw2/*
+__MACOSX/*
 
-# except these files
 !.gitignore
-!mlLearningAgents.py
+!pacman-cw2/mlLearningAgents.py
