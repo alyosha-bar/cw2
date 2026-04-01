@@ -46,64 +46,20 @@ class GameStateFeatures:
         Args:
             state: A given game state object
         """
-
+       #using board coordinates for pacman and ghosts, and a tuple of food coordinates for the food grid
         pacman_pos = state.getPacmanPosition()
-        ghost_positions = state.getGhostPositions()
-
-        # --- Feature 1: Closest ghost distance, bucketed ---
-        # Rather than a single boolean, we bucket the nearest ghost distance
-        # into 3 bands: DANGER (≤2), CLOSE (≤5), SAFE (>5).
-        # This gives the agent enough warning to flee without exploding the
-        # state space the way a full distance value would.
-        if ghost_positions:
-            min_ghost_dist = min(
-                util.manhattanDistance(pacman_pos, gp) for gp in ghost_positions
-            )
-        else:
-            min_ghost_dist = 999
-
-        if min_ghost_dist <= 2:
-            ghost_threat = "DANGER"
-        elif min_ghost_dist <= 5:
-            ghost_threat = "CLOSE"
-        else:
-            ghost_threat = "SAFE"
-
-        # --- Feature 2: Direction *and* distance band to the nearest food ---
-        # Using only direction lost whether food was 1 step away or 10 steps
-        # away, which made the reward signal very noisy.  Adding a distance
-        # band (NEAR / FAR) doubles the food states but dramatically sharpens
-        # the signal.
-        food_list = state.getFood().asList()
-
-        if food_list:
-            dists = [util.manhattanDistance(pacman_pos, f) for f in food_list]
-            min_food_dist = min(dists)
-            closest_food = food_list[dists.index(min_food_dist)]
-
-            dx = closest_food[0] - pacman_pos[0]
-            dy = closest_food[1] - pacman_pos[1]
-
-            if abs(dx) > abs(dy):
-                food_dir = Directions.EAST if dx > 0 else Directions.WEST
-            else:
-                food_dir = Directions.NORTH if dy > 0 else Directions.SOUTH
-
-            food_dist_band = "NEAR" if min_food_dist <= 2 else "FAR"
-        else:
-            food_dir = None
-            food_dist_band = "NONE"
-
-        # --- Feature 3: Legal actions (encodes wall layout around Pacman) ---
+        ghost_pos = tuple(state.getGhostPositions()) 
+        food_grid = tuple(state.getFood().asList())  
+        
+        # get legal actions and remove STOP to simplify the action space
         self.legalActions = state.getLegalActions()
-        if Directions.STOP in self.legalActions:
-            self.legalActions.remove(Directions.STOP)
 
+        # find the best state representation that captures all relevant information for decision-making using a tuple of all the information extracted from the top three lines. 
         self.features = (
-            ghost_threat,
-            food_dir,
-            food_dist_band,
-            tuple(sorted(self.legalActions)),
+            pacman_pos,
+            ghost_pos,
+            food_grid,
+            tuple(sorted(self.legalActions))
         )
 
     def __hash__(self):
@@ -119,7 +75,7 @@ class QLearnAgent(Agent):
 
     def __init__(self,
                  alpha: float = 0.2,
-                 epsilon: float = 0.05,
+                 epsilon: float = 0.2,
                  gamma: float = 0.9,
                  maxAttempts: int = 30,
                  numTraining: int = 10):
@@ -143,7 +99,8 @@ class QLearnAgent(Agent):
         self.gamma = float(gamma)
         self.maxAttempts = int(maxAttempts)
         self.numTraining = int(numTraining)
-        # Count the number of games we have played
+        
+        # count the number of games we have played
         self.episodesSoFar = 0
 
         # q_values & counts
@@ -193,20 +150,13 @@ class QLearnAgent(Agent):
         Returns:
             The reward assigned for the given trajectory
         """
-        # Use score delta as the base reward.  The game engine already
-        # encodes eating food (+10), dying (-500), and winning (+500) inside
-        # the score, so we must NOT add those again — that was causing the
-        # agent to receive ±1000 for terminal states instead of ±500 and
-        # confused the Q-table badly.
-        reward = endState.getScore() - startState.getScore()
+       
+        
+        return endState.getScore() - startState.getScore()
 
-        # Small living penalty on non-terminal steps to discourage looping.
-        # Terminal penalties/bonuses are already captured by the score delta
-        # above, so we only add the living penalty on ordinary moves.
-        if not endState.isWin() and not endState.isLose():
-            reward -= 1
+       
+       
 
-        return reward
 
     # WARNING: You will be tested on the functionality of this method
     # DO NOT change the function signature
@@ -308,13 +258,10 @@ class QLearnAgent(Agent):
         Returns:
             The exploration value
         """
-        # Optimistic initialisation: prefer under-explored (state, action)
-        # pairs, but scale the bonus DOWN as counts grow rather than keeping
-        # it at a flat 1000.  A flat 1000 made the agent keep re-visiting
-        # pairs it had already identified as harmful.
+        
+        # optimistic pick --> reward under-explored actions but decay the reward 
         if counts < self.maxAttempts:
-            # Decaying bonus: the more we've tried it the less curious we are.
-            return utility + (self.maxAttempts - counts) * 10
+            return utility + 1000.0 / (1 + counts)
         return utility
 
     # WARNING: You will be tested on the functionality of this method
@@ -333,11 +280,15 @@ class QLearnAgent(Agent):
         Returns:
             The action to take
         """
+
+        # get legal moves
         legal = state.getLegalPacmanActions()
+        
+        # remove STOP because it is not a useful action in almost all scenarios
         if Directions.STOP in legal:
             legal.remove(Directions.STOP)
 
-        # Learn from the previous transition before choosing the next action
+        # learn from the previous transition before choosing the next action
         if self.lastState is not None:
             reward = self.computeReward(self.lastState, state)
             self.learn(
@@ -356,7 +307,7 @@ class QLearnAgent(Agent):
 
         stateFeatures = GameStateFeatures(state)
 
-        # Epsilon-greedy exploration
+        # epsilon-greedy exploration
         if util.flipCoin(self.epsilon):
             action = random.choice(legal)
         else:
@@ -376,6 +327,7 @@ class QLearnAgent(Agent):
 
             action = random.choice(best_actions)
 
+        # udpates counts and stores the last state and action for learning in the next step
         self.updateCount(stateFeatures, action)
         self.lastState = state
         self.lastAction = action
@@ -390,7 +342,11 @@ class QLearnAgent(Agent):
         Args:
             state: the final game state
         """
+
+        # compute final reward
         reward = self.computeReward(self.lastState, state)
+
+        # learn from the final transition
         self.learn(
             GameStateFeatures(self.lastState),
             self.lastAction,
@@ -398,6 +354,7 @@ class QLearnAgent(Agent):
             GameStateFeatures(state),
         )
 
+        # reset actions and states for the next episode
         self.lastState = None
         self.lastAction = None
 
